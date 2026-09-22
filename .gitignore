@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# 临时构建产物 / 中间文件
+.tmp-*/
+tmp/
+*.tmp
+*.bak
+
+# Office 临时文件
+~$*
+
+# 编辑器 / IDE
+.idea/
+.vscode/
+*.swp
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

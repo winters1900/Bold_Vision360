@@ -1,20 +1,35 @@
 """Head-relative geometry and evidence-based alerts; no model/runtime dependencies."""
+
 from collections import deque
 from dataclasses import asdict, dataclass
 import math
 import uuid
 
-LABELS = {"horn": "汽车鸣笛", "siren": "警笛", "bell": "自行车铃", "shout": "喊声", "speech": "人声"}
+LABELS = {
+    "horn": "汽车鸣笛",
+    "siren": "警笛",
+    "bell": "自行车铃",
+    "shout": "喊声",
+    "speech": "人声",
+}
 PRIORITY = {"horn": 0, "siren": 0, "bell": 1, "shout": 1, "speech": 2}
 DIRECTIONS = ["前方", "右前", "右侧", "右后", "后方", "左后", "左侧", "左前"]
-MATCHES = {"horn": {"car", "truck", "bus", "motorcycle"}, "siren": {"car", "truck", "bus"},
-           "bell": {"bicycle"}, "shout": {"person"}, "speech": {"person"}}
+MATCHES = {
+    "horn": {"car", "truck", "bus", "motorcycle"},
+    "siren": {"car", "truck", "bus"},
+    "bell": {"bicycle"},
+    "shout": {"person"},
+    "speech": {"person"},
+}
+
 
 def delta(a, b):
     return (a - b + 180) % 360 - 180
 
+
 def sector(angle):
     return int((angle + 22.5) % 360 // 45)
+
 
 class DirectionFilter:
     def __init__(self):
@@ -23,7 +38,7 @@ class DirectionFilter:
 
     def update(self, angle, now):
         self.samples.append((now, angle))
-        while self.samples and now - self.samples[0][0] > .3:
+        while self.samples and now - self.samples[0][0] > 0.3:
             self.samples.popleft()
         x = sum(math.cos(math.radians(a)) for _, a in self.samples)
         y = sum(math.sin(math.radians(a)) for _, a in self.samples)
@@ -31,6 +46,7 @@ class DirectionFilter:
         if self.current is None or abs(delta(smooth, self.current * 45)) > 37.5:
             self.current = sector(smooth)
         return smooth, self.current
+
 
 @dataclass
 class Event:
@@ -49,6 +65,7 @@ class Event:
     approaching: bool = False
     simulated: bool = False
 
+
 class Fusion:
     def __init__(self):
         self.events = {}
@@ -59,11 +76,25 @@ class Fusion:
         self.events.clear()
         self.filters.clear()
 
-    def observe(self, category, confidence, now, targets, audio_source, angle=None, direction_confidence=0, simulated=False):
-        candidates = [t for t in targets if t["label"] in MATCHES[category] and abs(now-t["timestamp"]) < .5]
+    def observe(
+        self,
+        category,
+        confidence,
+        now,
+        targets,
+        audio_source,
+        angle=None,
+        direction_confidence=0,
+        simulated=False,
+    ):
+        candidates = [
+            t
+            for t in targets
+            if t["label"] in MATCHES[category] and abs(now - t["timestamp"]) < 0.5
+        ]
         evidence = "audio_only"
         target = None
-        if angle is not None and direction_confidence >= .2:
+        if angle is not None and direction_confidence >= 0.2:
             evidence = "audio_direction"
             associated = [t for t in candidates if abs(delta(t["angle"], angle)) < 25]
             if len(associated) == 1:
@@ -82,9 +113,22 @@ class Fusion:
         band = None
         if angle is not None:
             angle, band = self.filters.setdefault(category, DirectionFilter()).update(angle, now)
-        event = Event(old.id if old else uuid.uuid4().hex[:12], category, LABELS[category], PRIORITY[category],
-                      angle, band, float(confidence), evidence, audio_source, old.created_at if old else now,
-                      now, now+1.2, bool(target and target.get("approaching")), simulated)
+        event = Event(
+            old.id if old else uuid.uuid4().hex[:12],
+            category,
+            LABELS[category],
+            PRIORITY[category],
+            angle,
+            band,
+            float(confidence),
+            evidence,
+            audio_source,
+            old.created_at if old else now,
+            now,
+            now + 1.2,
+            bool(target and target.get("approaching")),
+            simulated,
+        )
         self.events[category] = event
         if not old:
             self.history.appendleft(event)

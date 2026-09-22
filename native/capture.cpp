@@ -87,9 +87,21 @@ int main(int argc,char** argv) {
     if(connect(sock,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))){std::cerr<<"service unavailable\n";return 3;}
     DWORD timeout=2000; setsockopt(sock,SOL_SOCKET,SO_SNDTIMEO,reinterpret_cast<char*>(&timeout),sizeof(timeout));
     Buffer buffer;
-    std::thread control([&] {std::string line;while(std::getline(std::cin,line)) {if(line=="stop") break;}
-        buffer.running=false;buffer.cv.notify_all();});
-    control.detach(); // process lifetime; service always closes stdin on exit
+    std::thread control([&] {
+        HANDLE input=GetStdHandle(STD_INPUT_HANDLE);std::string command;
+        while(buffer.running){
+            DWORD available=0;
+            if(!PeekNamedPipe(input,nullptr,0,nullptr,&available,nullptr)){buffer.running=false;break;}
+            if(available){
+                char chunk[64];DWORD count=0;
+                if(!ReadFile(input,chunk,std::min<DWORD>(available,64),&count,nullptr)){buffer.running=false;break;}
+                command.append(chunk,count);
+                if(command.find("stop\n")!=std::string::npos){buffer.running=false;break;}
+                if(command.size()>1024)command.clear();
+            }else Sleep(50);
+        }
+        buffer.cv.notify_all();
+    });
     int result=0;
     try {
         ins::InitEnv(); ins::SetModelFileRootDir(argv[2]);
@@ -118,7 +130,7 @@ int main(int argc,char** argv) {
             // MediaSDK 3.1.7 on this X4 Air labels packed RGBA as 0, despite its header
             // documenting AVPixelFormat. Accept that quirk only for a packed 4-byte row
             // with opaque alpha samples; never interpret actual planar YUV420P as RGBA.
-            bool packedQuirk=fmt==0 && strides[0]==w*4;
+            bool packedQuirk=fmt==0 && w>0 && w<=4096 && h>0 && h<=2048 && strides[0]==w*4 && !data[1] && !data[2];
             if(packedQuirk && data[0] && w>0 && h>0){
                 for(int x=0;x<w;x+=std::max(1,w/16))if(data[0][x*4+3]!=255){packedQuirk=false;break;}
             }
@@ -160,5 +172,6 @@ int main(int argc,char** argv) {
         if(audioMode)cam->SetVideoSubMode(ins_camera::SubVideoMode::VIDEO_NORMAL);
         cam->Close();
     }catch(const std::exception& e){std::cerr<<e.what()<<std::endl;result=5;}
+    buffer.running=false;buffer.cv.notify_all();control.join();
     closesocket(sock);WSACleanup();return result;
 }

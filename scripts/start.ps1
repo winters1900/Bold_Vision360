@@ -12,15 +12,18 @@ if($existing){if(!$NoBrowser){Start-Process $url};Write-Host "Already running: $
 $env:TF_CPP_MIN_LOG_LEVEL='2'
 $env:TF_ENABLE_ONEDNN_OPTS='0'
 $pythonPath=Join-Path $projectRoot '.venv/Scripts/python.exe'
-$p=Start-Process -FilePath $pythonPath -ArgumentList "-m uvicorn server.app:app --host 127.0.0.1 --port $($cfg.port)" -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
+New-Item -ItemType Directory -Force runtime | Out-Null
+$p=Start-Process -FilePath $pythonPath -ArgumentList "-m uvicorn server.app:app --host 127.0.0.1 --port $($cfg.port) --no-access-log" -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $projectRoot 'runtime/service.stdout.log') -RedirectStandardError (Join-Path $projectRoot 'runtime/service.stderr.log')
 try {
+  $ready=$false
   for($i=0;$i -lt 60;$i++){
     if($p.HasExited){throw 'Service exited. Run scripts/diagnose.ps1.'}
-    try {$null=Invoke-RestMethod "$url/api/status" -TimeoutSec 1;break} catch {Start-Sleep -Milliseconds 500}
+    try {$null=Invoke-RestMethod "$url/api/status" -TimeoutSec 1;$ready=$true;break} catch {Start-Sleep -Milliseconds 500}
   }
+  if(!$ready){throw 'Service startup timed out. See runtime/service.stderr.log.'}
   if(!$NoBrowser){Start-Process $url}
-  Write-Host "Bold Vision 360: $url — keep this terminal open; Ctrl+C stops the service."
-  $p.WaitForExit()
+  Write-Host "Bold Vision 360: $url - keep this terminal open; Ctrl+C stops the service."
+  while(!$p.HasExited){Start-Sleep -Milliseconds 500}
 } finally {
   try {Invoke-RestMethod "$url/api/stop" -Method Post -TimeoutSec 12 | Out-Null} catch {}
   if(!$p.HasExited){Stop-Process -Id $p.Id}

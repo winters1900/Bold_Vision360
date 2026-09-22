@@ -1,0 +1,15 @@
+{
+  "planned_positive_trials": 240,
+  "measured_positive_trials": 0,
+  "detected_trials": 0,
+  "missed_trials": 0,
+  "direction_unknown_trials": 0,
+  "recall": null,
+  "direction_median_error_deg": null,
+  "direction_coverage": null,
+  "alert_latency_p95_ms": null,
+  "latency_measured_trials": 0,
+  "negative_minutes": 0,
+  "false_positives_per_5_minutes": null,
+  "status": "not_fully_measured"
+}

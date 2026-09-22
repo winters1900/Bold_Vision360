@@ -29,3 +29,15 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Local runtimes, proprietary SDKs, model weights and captured media
+.tools/
+models/
+recordings/
+runtime/
+build/
+config.local.json
+web/node_modules/
+web/dist/
+.pytest_cache/
+reports/local-*

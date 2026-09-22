@@ -1,0 +1,12 @@
+{
+  "camera_sdk": "D:/CameraSDK_MediaSDK/Linux_CameraSDK-2.1.8_MediaSDK-3.1.6/CameraSDK-2.2.0-20260918_164435-win64",
+  "media_sdk": "D:/CameraSDK_MediaSDK/Linux_CameraSDK-2.1.8_MediaSDK-3.1.6/MediaSDK-3.1.7-20260917_192552-win64_1789644678232",
+  "port": 8765,
+  "capture_port": 8766,
+  "microphone_fallback": true,
+  "microphone_device": null,
+  "forward_offset_deg": 0,
+  "audio_profile": "unknown",
+  "software_decode": false,
+  "thresholds": {"horn": 0.35, "siren": 0.35, "bell": 0.35, "shout": 0.4, "speech": 0.55}
+}

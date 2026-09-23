@@ -1,8 +1,9 @@
 """Head-relative geometry and evidence-based alerts; no model/runtime dependencies."""
 
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import math
+import time
 import uuid
 
 LABELS = {
@@ -112,6 +113,9 @@ class Event:
     candidate_count: int = 0
     target_id: int | None = None
     direction_confidence: float = 0
+    # Host monotonic clock when fusion created this version of the event.
+    # updated_at is the timestamp of the most recent contributing input block.
+    generated_at: float = field(default_factory=time.perf_counter)
 
 
 class Fusion:

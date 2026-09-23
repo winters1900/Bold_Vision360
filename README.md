@@ -31,6 +31,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start.ps1
 
 ## 安装与重建
 
+制作可审核的本地源码 ZIP 及核对第三方许可边界，见[源码包制作与发布边界](docs/release.md)。源码包不包含 SDK、模型权重、素材或本机标定文件。
+
 要求 Windows x64、Python **3.12 x64**、Visual Studio 2022/2026 的「使用 C++ 的桌面开发」及 Windows SDK。首次安装联网，运行不联网。
 
 1. 复制 `config.example.json` 为 `config.local.json`，填写解压后的 CameraSDK 与 MediaSDK 路径。

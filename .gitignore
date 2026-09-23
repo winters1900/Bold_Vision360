@@ -42,3 +42,4 @@ web/dist/
 .pytest_cache/
 reports/local-*
 web/*.tsbuildinfo
+.worktrees/

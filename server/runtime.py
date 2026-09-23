@@ -9,11 +9,22 @@ import struct
 import time
 import numpy as np
 from PIL import Image
-from .audio import AudioWindow, Classifier, fit_axes, intensity
-from .domain import Fusion, delta
+from .audio import (
+    AudioSignal,
+    AudioWindow,
+    Classifier,
+    SPATIAL_METHOD,
+    fit_axes,
+    intensity,
+    localization_status,
+    pcm_from_frame,
+)
+from .domain import DEFAULT_THRESHOLDS, Fusion, acoustic_bearing_unambiguous, delta
 from .recording import Recorder, safe_session, load_timeline
 from .vision import Detector
 from .clock import CameraClock
+from .noise import classify_views, processing_status
+from .calibration import calibration_quality, capture_binding, load_samples, save_samples
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -26,6 +37,9 @@ class Runtime:
                 encoding="utf-8-sig"
             )
         )
+        thresholds = self.config.setdefault("thresholds", {})
+        for category, value in DEFAULT_THRESHOLDS.items():
+            thresholds.setdefault(category, value)
         self.mode = "idle"
         self.phase = "stopped"
         self.error = None
@@ -43,6 +57,7 @@ class Runtime:
         self.audio_queue = asyncio.Queue(maxsize=128)
         self.raw_queue = asyncio.Queue(maxsize=128)
         self.window = AudioWindow()
+        self.signal = AudioSignal()
         self.audio_source = "none"
         self.audio_rate = 0
         self.channels = 0
@@ -62,6 +77,8 @@ class Runtime:
         self.tasks = []
         self.calibration = None
         self.calibration_samples = {}
+        self.calibration_samples_binding = None
+        self.calibration_error = None
         self.calibration_ring = deque(maxlen=150)
         self.calibration_lock = asyncio.Lock()
         self.lifecycle = asyncio.Lock()
@@ -78,10 +95,38 @@ class Runtime:
         self.audio_layout = "unknown"
         self.clock = CameraClock()
         self.replay_forward = 0
+        self.replay_audio_config = {}
+        self.audio_comparison = {}
+        self.audio_analysis_epoch = 0
 
     @property
     def forward_offset(self):
         return self.replay_forward if self.mode == "replay" else self.config["forward_offset_deg"]
+
+    @property
+    def audio_config(self):
+        return self.replay_audio_config if self.mode == "replay" else self.config
+
+    @property
+    def spatial_binding(self):
+        return capture_binding(self.native, self.audio_config, self.audio_rate, self.channels)
+
+    @property
+    def mapped_audio(self):
+        data = self.calibration
+        return bool(
+            data
+            and data.get("rotation_verified")
+            and data.get("method") == SPATIAL_METHOD
+            and self.audio_source == "camera"
+            and self.channels == 4
+            and self.native.get("serial")
+            and all(data.get(k) == v for k, v in self.spatial_binding.items())
+        )
+
+    @property
+    def calibrated_audio(self):
+        return self.mapped_audio and calibration_quality(self.calibration)["passed"]
 
     async def initialize(self):
         (ROOT / "runtime").mkdir(exist_ok=True)
@@ -111,7 +156,7 @@ class Runtime:
                 else:
                     self.detector = result
                 self.model_status[name] = "ready" + (
-                    ":" + result.provider if name == "vision" else ""
+                    ":" + result.provider if name == "vision" else ":YAMNet-521"
                 )
             except Exception as exc:
                 self.model_status[name] = "error: " + str(exc)[:240]
@@ -124,6 +169,21 @@ class Runtime:
     def snapshot(self):
         now = time.perf_counter()
         active, history = self.fusion.snapshot(now)
+        signal = self.signal.snapshot(now)
+        localization = localization_status(
+            signal,
+            self.audio_source,
+            self.channels,
+            self.calibrated_audio,
+        )
+        quality = calibration_quality(self.calibration)
+        if self.mapped_audio and signal["present"] and not quality["passed"]:
+            localization = dict(
+                mode="visual_candidate_only",
+                acoustic_available=False,
+                title="声道映射已验证 · 方位精度不足",
+                detail=quality["reason"],
+            )
         if self.mode == "live" and now - self.frame_time > 2:
             active = []
         fps = (
@@ -144,6 +204,10 @@ class Runtime:
             "audio_rate": self.audio_rate,
             "audio_layout": self.audio_layout,
             "energy": self.energy,
+            "audio_signal": signal,
+            "localization": localization,
+            "audio_processing": processing_status(self.audio_config, self.audio_source),
+            "audio_comparison": self.audio_comparison,
             "scores": self.scores,
             "models": self.model_status,
             "detection_ms": round(self.detection_ms, 1),
@@ -160,6 +224,11 @@ class Runtime:
             "calibration": self.calibration,
             "calibration_stage": self.calibration_stage,
             "calibration_captured": sorted(self.calibration_samples),
+            "calibration_error": self.calibration_error,
+            "calibration_quality": quality,
+            "classification_channel": self.calibration["mapping"]["w"]
+            if self.mapped_audio
+            else None,
             "clock_diagnostics": self.clock_diagnostics,
             "forward_offset_deg": self.forward_offset,
         }
@@ -184,7 +253,7 @@ class Runtime:
             self.frame_times.clear()
             self.audio_source = "none"
             self.last_camera_audio = 0
-            self.window.clear()
+            self.reset_audio_analysis()
             self.last_observation.clear()
             self.native = {}
             self.calibration_ring.clear()
@@ -197,7 +266,10 @@ class Runtime:
             self.channels = 0
             self.audio_rate = 0
             self.calibration_samples.clear()
+            self.calibration_samples_binding = None
+            self.calibration_error = None
             self.audio_layout = "unknown"
+            self.replay_audio_config = {}
             self.drops = 0
             if self.detector:
                 self.detector.previous = []
@@ -234,7 +306,7 @@ class Runtime:
         self.recorder.stop()
         self.fusion.clear()
         self.targets = []
-        self.window.clear()
+        self.reset_audio_analysis()
         self.audio_source = "none"
         self.energy = 0
         self.latest_raw = None
@@ -284,7 +356,7 @@ class Runtime:
             self.clock_samples.clear()
             self.clock_diagnostics.clear()
             self.fusion.clear()
-            self.window.clear()
+            self.reset_audio_analysis()
             self.capture_epoch += 1
             self.last_observation.clear()
             self.calibration_ring.clear()
@@ -388,17 +460,27 @@ class Runtime:
         raw = header["camera_us"]  # historical wire key; value is raw ticks, unit measured below
         previous = self.clock.previous.get(kind)
         if previous is not None and raw < previous:
-            self.window.clear()
+            self.reset_audio_analysis()
             self.fusion.clear()
         header["host_time"] = self.clock.align(kind, raw, header["host_time"])
         self.clock_diagnostics = self.clock.diagnostics.copy()
+
+    def reset_audio_analysis(self):
+        self.audio_analysis_epoch += 1
+        self.window.clear()
+        self.signal.clear()
+        self.energy = 0
+        self.scores = {}
+        self.audio_comparison = {}
+        self.last_observation.clear()
+        self.calibration_ring.clear()
 
     def enqueue(self, queue, item):
         if queue.full():
             while not queue.empty():
                 queue.get_nowait()
             self.drops += 1
-            self.window.clear()
+            self.reset_audio_analysis()
             if queue is self.raw_queue:
                 item[0]["discontinuity"] = True
         queue.put_nowait(item)
@@ -455,20 +537,12 @@ class Runtime:
                     or old_epoch != self.capture_epoch
                 ):
                     decoder = av.CodecContext.create("aac", "r")
-                    self.window.clear()
+                    self.reset_audio_analysis()
                     old_generation = generation
                     old_epoch = self.capture_epoch
                 for packet in decoder.parse(data):
                     for frame in decoder.decode(packet):
-                        pcm = frame.to_ndarray()
-                        channels = len(frame.layout.channels)
-                        if frame.format.is_planar:
-                            pcm = pcm.T
-                        else:
-                            pcm = pcm.reshape(-1, channels)
-                        if np.issubdtype(pcm.dtype, np.integer):
-                            pcm = pcm.astype(np.float32) / 32768
-                        pcm = pcm.astype(np.float32)
+                        pcm = pcm_from_frame(frame)
                         self.last_camera_audio = time.perf_counter()
                         self.audio_layout = frame.layout.name
                         self.enqueue(
@@ -485,7 +559,7 @@ class Runtime:
             except Exception as exc:
                 self.error = "AAC 解码: " + str(exc)
                 decoder = av.CodecContext.create("aac", "r")
-                self.window.clear()
+                self.reset_audio_analysis()
 
     async def start_microphone(self):
         if self.mic:
@@ -498,7 +572,7 @@ class Runtime:
             if generation != self.generation:
                 return
             if status:
-                self.loop.call_soon_threadsafe(self.window.clear)
+                self.loop.call_soon_threadsafe(self.reset_audio_analysis)
             item = (data.copy(), 16000, "microphone", time.perf_counter(), generation, None)
             self.loop.call_soon_threadsafe(self.enqueue, self.audio_queue, item)
 
@@ -521,13 +595,33 @@ class Runtime:
             if source == "microphone" and time.perf_counter() - self.last_camera_audio < 2:
                 continue
             if time.perf_counter() - timestamp > 1.5:
-                self.window.clear()
+                self.reset_audio_analysis()
                 self.drops += 1
                 continue
             self.audio_source = source
             self.channels = pcm.shape[1]
             self.audio_rate = rate
-            self.energy = self.window.append(pcm, rate, source, timestamp)
+            if (
+                self.mode == "live"
+                and source == "camera"
+                and self.channels == 4
+                and self.calibration_samples_binding != self.spatial_binding
+            ):
+                self.load_calibration()
+            if self.window.source != source or (
+                self.window.last_time is not None
+                and not 0 <= timestamp - self.window.last_time <= 0.35
+            ):
+                self.reset_audio_analysis()
+            self.energy = self.window.append(
+                pcm,
+                rate,
+                source,
+                timestamp,
+                self.audio_config.get("audio_preprocessing", "off"),
+                self.calibration["mapping"]["w"] if self.mapped_audio else None,
+            )
+            self.signal.append(pcm, rate, source, timestamp)
             self.recorder.write(
                 "audio",
                 pcm,
@@ -540,29 +634,51 @@ class Runtime:
             started = time.perf_counter()
             self.window.last_infer = started
             epoch = self.capture_epoch
+            audio_epoch = self.audio_analysis_epoch
             try:
-                scores = await asyncio.to_thread(self.classifier.infer, self.window.samples.copy())
+                comparison = await asyncio.to_thread(
+                    classify_views,
+                    self.classifier,
+                    self.window.samples.copy(),
+                    self.window.processed_samples.copy()
+                    if self.window.preprocessing != "off"
+                    else None,
+                )
             except Exception as exc:
                 self.model_status["audio"] = "error: " + str(exc)
                 continue
-            if generation != self.generation or epoch != self.capture_epoch:
+            if (
+                generation != self.generation
+                or epoch != self.capture_epoch
+                or audio_epoch != self.audio_analysis_epoch
+            ):
                 continue
             self.audio_ms = (time.perf_counter() - started) * 1000
             self.classification_time = time.perf_counter()
+            scores = comparison["scores"]
+            self.audio_comparison = comparison
             self.scores = scores
+            detected = {
+                category
+                for category, score in scores.items()
+                if score >= self.config["thresholds"][category]
+            }
+            ambiguous_audio = bool(detected) and not acoustic_bearing_unambiguous(detected)
             angle = None
             direction_confidence = 0
-            if (
-                self.calibration
-                and self.calibration.get("rotation_verified")
-                and source == "camera"
-                and self.channels == 4
-            ):
+            if detected and not ambiguous_audio and self.calibrated_audio:
                 recent = [p for t, p in self.calibration_ring if timestamp - t < 0.3]
-                if recent:
+                if sum(len(p) for p in recent) >= rate // 10:
                     angle, direction_confidence = intensity(
-                        np.concatenate(recent), self.calibration["mapping"]
+                        np.concatenate(recent), self.calibration["mapping"], rate
                     )
+            unknown_reason = (
+                "ambiguous_audio_categories"
+                if ambiguous_audio and self.calibrated_audio
+                else "low_acoustic_confidence"
+                if angle is not None and direction_confidence < 0.2
+                else None
+            )
             for category, score in scores.items():
                 if score < self.config["thresholds"][category]:
                     self.last_observation.pop(category, None)
@@ -572,12 +688,24 @@ class Runtime:
                 if previous is None or timestamp - previous > 0.4:
                     continue
                 event = self.fusion.observe(
-                    category, score, timestamp, self.targets, source, angle, direction_confidence
+                    category,
+                    score,
+                    timestamp,
+                    self.targets,
+                    source,
+                    angle,
+                    direction_confidence,
+                    unknown_reason=unknown_reason,
                 )
                 self.recorder.write(
                     "event",
                     None,
-                    {"timestamp": timestamp, "event": asdict(event), "inference_ms": self.audio_ms},
+                    {
+                        "timestamp": timestamp,
+                        "event": asdict(event),
+                        "inference_ms": self.audio_ms,
+                        "audio_comparison": comparison,
+                    },
                 )
 
     async def vision_worker(self):
@@ -623,8 +751,7 @@ class Runtime:
                         self.error = "电脑麦克风不可用: " + str(exc)
                         mic_retry = now + 15
             if self.window.last_time and now - self.window.last_time > 1:
-                self.energy = 0
-                self.scores = {}
+                self.reset_audio_analysis()
                 self.audio_source = "none"
 
     async def replay(self, session, generation):
@@ -633,6 +760,7 @@ class Runtime:
             entries = load_timeline(folder)
             metadata = json.loads((folder / "session.json").read_text(encoding="utf-8"))
             self.replay_forward = metadata.get("config", {}).get("forward_offset_deg", 0)
+            self.replay_audio_config = metadata.get("config", {}).copy()
             self.calibration = metadata.get("calibration")
             self.native = metadata.get("native", {})
             if not entries:
@@ -672,29 +800,65 @@ class Runtime:
             self.error = str(exc)
 
     def load_calibration(self):
-        path = ROOT / "runtime/calibration.json"
-        if self.calibration or not path.exists():
+        if self.mode != "live" or self.channels != 4 or self.audio_rate < 16000:
             return
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if (
-            data.get("serial") == self.native.get("serial")
-            and data.get("audio_profile") == self.config["audio_profile"]
-        ):
-            self.calibration = data
+        binding = self.spatial_binding
+        if not binding["serial"] or binding == self.calibration_samples_binding:
+            return
+        self.calibration_samples_binding = binding
+        self.calibration = None
+        self.calibration_samples = {}
+        self.calibration_error = None
+        try:
+            path = ROOT / "runtime/calibration.json"
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if data.get("method") == SPATIAL_METHOD and all(
+                    data.get(k) == v for k, v in binding.items()
+                ):
+                    self.calibration = data
+            self.calibration_samples = load_samples(
+                ROOT / "runtime/calibration-samples.npz", binding
+            )
+            if not self.calibration and len(self.calibration_samples) == 4:
+                self.calibration = {
+                    **fit_axes(self.calibration_samples, self.audio_rate),
+                    **binding,
+                }
+        except (ValueError, OSError, KeyError) as exc:
+            self.calibration_error = str(exc)
+
+    def save_calibration(self):
+        path = ROOT / "runtime/calibration.json"
+        path.parent.mkdir(exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(self.calibration, indent=2), encoding="utf-8")
+        temporary.replace(path)
 
     async def calibrate(self, angle):
+        if angle not in (0, 90, 180, 270, "rotation"):
+            raise ValueError("无效标定步骤")
         if self.mode != "live" or self.audio_source != "camera" or self.channels != 4:
             raise ValueError("仅相机四声道实时音频支持此标定")
         if self.config["audio_profile"] == "unknown":
             raise ValueError("请先在设置中填写机身实际收音模式")
+        if self.calibration_lock.locked():
+            raise ValueError("已有标定采样正在进行，请等待结束")
         async with self.calibration_lock:
             self.calibration_stage = angle
+            self.calibration_error = None
             start = time.perf_counter()
             generation = self.generation
+            epoch = self.capture_epoch
+            audio_epoch = self.audio_analysis_epoch
+            binding = self.spatial_binding
             try:
                 await asyncio.sleep(2)
                 if (
                     generation != self.generation
+                    or epoch != self.capture_epoch
+                    or audio_epoch != self.audio_analysis_epoch
+                    or binding != self.spatial_binding
                     or self.audio_source != "camera"
                     or self.channels != 4
                 ):
@@ -706,26 +870,47 @@ class Runtime:
                     raise ValueError("有效四声道数据不足一秒")
                 pcm = np.concatenate(data)
                 if angle in (0, 90, 180, 270):
+                    # A new cardinal sample invalidates a previously verified fit.
+                    self.calibration = None
+                    (ROOT / "runtime/calibration.json").unlink(missing_ok=True)
+                    if self.calibration_samples_binding != binding:
+                        self.calibration_samples.clear()
+                    self.calibration_samples_binding = binding
                     self.calibration_samples[angle] = pcm
+                    save_samples(
+                        ROOT / "runtime/calibration-samples.npz", self.calibration_samples, binding
+                    )
                     if len(self.calibration_samples) == 4:
                         self.calibration = {
-                            **fit_axes(self.calibration_samples),
-                            "serial": self.native.get("serial"),
-                            "audio_profile": self.config["audio_profile"],
+                            **fit_axes(self.calibration_samples, self.audio_rate),
+                            **binding,
                         }
+                        self.save_calibration()
                 elif angle == "rotation":
                     if not self.calibration:
                         raise ValueError("先完成四方位采样")
+                    save_samples(
+                        ROOT / "runtime/calibration-rotation.npz", {"rotation": pcm}, binding
+                    )
                     # Speaker stays in front in world coordinates; camera turns clockwise 90 degrees.
-                    measured, confidence = intensity(pcm, self.calibration["mapping"])
+                    self.calibration["rotation_verified"] = False
+                    measured, confidence = intensity(
+                        pcm, self.calibration["mapping"], self.audio_rate
+                    )
+                    self.calibration["rotation"] = dict(
+                        target=270,
+                        measured=measured,
+                        confidence=confidence,
+                        error_deg=abs(delta(measured, 270)),
+                    )
+                    self.save_calibration()
                     if confidence < 0.2 or abs(delta(measured, 270)) > 22.5:
                         raise ValueError("转动测试未通过，尚不能确认头相对方向")
                     self.calibration["rotation_verified"] = True
-                    (ROOT / "runtime/calibration.json").write_text(
-                        json.dumps(self.calibration, indent=2), encoding="utf-8"
-                    )
-                else:
-                    raise ValueError("无效标定步骤")
+                    self.save_calibration()
+            except ValueError as exc:
+                self.calibration_error = str(exc)
+                raise
             finally:
                 self.calibration_stage = None
         return self.snapshot()

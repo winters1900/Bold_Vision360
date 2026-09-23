@@ -11,8 +11,36 @@ LABELS = {
     "bell": "自行车铃",
     "shout": "喊声",
     "speech": "人声",
+    "brake": "轮胎尖叫/打滑声",
+    "crash": "碰撞/碎裂声",
+    "vehicle_passing": "车辆经过",
+    "dog_bark": "犬吠",
+    "doorbell": "门铃",
 }
-PRIORITY = {"horn": 0, "siren": 0, "bell": 1, "shout": 1, "speech": 2}
+PRIORITY = {
+    "horn": 0,
+    "siren": 0,
+    "bell": 1,
+    "shout": 1,
+    "brake": 1,
+    "crash": 1,
+    "speech": 2,
+    "vehicle_passing": 2,
+    "dog_bark": 2,
+    "doorbell": 2,
+}
+DEFAULT_THRESHOLDS = {
+    "horn": 0.35,
+    "siren": 0.35,
+    "bell": 0.35,
+    "shout": 0.4,
+    "speech": 0.55,
+    "brake": 0.5,
+    "crash": 0.55,
+    "vehicle_passing": 0.6,
+    "dog_bark": 0.6,
+    "doorbell": 0.55,
+}
 DIRECTIONS = ["前方", "右前", "右侧", "右后", "后方", "左后", "左侧", "左前"]
 MATCHES = {
     "horn": {"car", "truck", "bus", "motorcycle"},
@@ -20,7 +48,23 @@ MATCHES = {
     "bell": {"bicycle"},
     "shout": {"person"},
     "speech": {"person"},
+    "brake": {"car", "truck", "bus", "motorcycle"},
+    "crash": set(),
+    "vehicle_passing": {"car", "truck", "bus"},
+    "dog_bark": set(),
+    "doorbell": set(),
 }
+
+
+def acoustic_bearing_unambiguous(categories):
+    """One FOA intensity vector cannot assign bearings to distinct sound types.
+
+    YAMNet may label the same voice as both speech and shout, so they share a
+    family. Other concurrent category hits keep their alerts but lose the
+    acoustic bearing; a unique visual candidate may still supply its own.
+    """
+    families = {"voice" if name in ("speech", "shout") else name for name in categories}
+    return len(families) == 1
 
 
 def delta(a, b):
@@ -64,6 +108,10 @@ class Event:
     expires_at: float
     approaching: bool = False
     simulated: bool = False
+    direction_reason: str = ""
+    candidate_count: int = 0
+    target_id: int | None = None
+    direction_confidence: float = 0
 
 
 class Fusion:
@@ -86,6 +134,7 @@ class Fusion:
         angle=None,
         direction_confidence=0,
         simulated=False,
+        unknown_reason=None,
     ):
         candidates = [
             t
@@ -106,9 +155,23 @@ class Fusion:
                 angle, evidence = target["angle"], "visual_candidate"
         if simulated:
             evidence = "simulation"
+        direction_reason = {
+            "audio_only": "multiple_candidates"
+            if len(candidates) > 1
+            else (unknown_reason or "no_candidate"),
+            "visual_candidate": "unique_visual_candidate",
+            "audio_direction": "calibrated_audio",
+            "audio_visual": "audio_visual_match",
+            "simulation": "simulation",
+        }[evidence]
         old = self.events.get(category)
         if old and old.expires_at < now:
             old = None
+            self.filters.pop(category, None)
+        target_id = target.get("track_id") if target else None
+        # An unknown direction or a different candidate starts a fresh bearing.
+        # Blending unrelated candidates creates an angle supported by neither.
+        if angle is None or (old and (old.evidence != evidence or old.target_id != target_id)):
             self.filters.pop(category, None)
         band = None
         if angle is not None:
@@ -128,6 +191,10 @@ class Fusion:
             now + 1.2,
             bool(target and target.get("approaching")),
             simulated,
+            direction_reason,
+            len(candidates),
+            target_id,
+            float(direction_confidence) if evidence in ("audio_direction", "audio_visual") else 0,
         )
         self.events[category] = event
         if not old:

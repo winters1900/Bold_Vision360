@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import json
 import time
+from typing import Literal
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -40,6 +41,39 @@ async def status():
     return runtime.snapshot()
 
 
+@app.get("/api/audio/diagnostics")
+async def audio_diagnostics():
+    snapshot = runtime.snapshot()
+    fields = (
+        "mode",
+        "phase",
+        "audio_source",
+        "channels",
+        "audio_rate",
+        "audio_layout",
+        "audio_signal",
+        "localization",
+        "models",
+        "audio_drops",
+        "clock_diagnostics",
+        "audio_processing",
+        "audio_comparison",
+        "calibration",
+        "calibration_error",
+        "calibration_quality",
+        "classification_channel",
+    )
+    result = {key: snapshot[key] for key in fields}
+    result["camera_serial"] = runtime.native.get("serial")
+    result["declared_audio_profile"] = runtime.audio_config.get("audio_profile", "unknown")
+    result["profile_note"] = "机身收音模式由用户填写；实际能力依据收到的 PCM 检查，不由此设置启用。"
+    return Response(
+        json.dumps(result, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="audio-diagnostics.json"'},
+    )
+
+
 class Start(BaseModel):
     mode: str = "live"
     session: str | None = None
@@ -65,7 +99,17 @@ def config():
 
 class Settings(BaseModel):
     forward_offset_deg: float = Field(0, ge=-180, le=180)
-    audio_profile: str = Field("unknown", max_length=80)
+    audio_profile: Literal[
+        "unknown",
+        "ambisonic",
+        "stereo",
+        "wind_reduction",
+        "wind_reduction_weak",
+        "wind_reduction_strong",
+        "voice_focus",
+    ] = "unknown"
+    camera_microphone: Literal["unknown", "builtin", "external"] = "unknown"
+    audio_preprocessing: Literal["off", "lowcut_80hz"] = "off"
     microphone_fallback: bool = True
     microphone_device: int | None = None
 
@@ -74,7 +118,7 @@ class Settings(BaseModel):
 async def configure(body: Settings):
     if runtime.mode != "idle":
         raise HTTPException(409, "请先停止采集再修改设置")
-    runtime.config.update(body.model_dump())
+    runtime.config.update(body.model_dump(exclude_unset=True))
     runtime.calibration = None
     (ROOT / "config.local.json").write_text(
         json.dumps(runtime.config, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -101,7 +145,12 @@ async def record():
         raise HTTPException(409, "录制已开启")
     return {
         "session": runtime.recorder.start(
-            {"native": runtime.native, "calibration": runtime.calibration, "config": runtime.config}
+            {
+                "native": runtime.native,
+                "calibration": runtime.calibration,
+                "config": runtime.config,
+                "audio_storage_stage": "decoded_source_pcm_before_local_processing",
+            }
         )
     }
 
@@ -139,7 +188,9 @@ async def reset_calibration():
         raise HTTPException(409, "标定采样中，请等待采样结束")
     runtime.calibration = None
     runtime.calibration_samples.clear()
+    runtime.calibration_error = None
     (ROOT / "runtime/calibration.json").unlink(missing_ok=True)
+    (ROOT / "runtime/calibration-samples.npz").unlink(missing_ok=True)
     return {"ok": True}
 
 

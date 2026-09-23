@@ -26,23 +26,17 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import "./style.css";
+import {
+  SoundHalo as Halo,
+  SignalWave,
+  Tetrahedron,
+  directionReason,
+  type SoundEvent,
+  type AudioSignal,
+  type Localization,
+} from "./audio-hud";
 
-type Alert = {
-  id: string;
-  category: string;
-  label: string;
-  priority: number;
-  angle: number | null;
-  sector: number | null;
-  confidence: number;
-  evidence: string;
-  audio_source: string;
-  created_at: number;
-  updated_at: number;
-  expires_at: number;
-  approaching: boolean;
-  simulated: boolean;
-};
+type Alert = SoundEvent;
 type Target = {
   label: string;
   bbox: number[];
@@ -62,6 +56,21 @@ type State = {
   channels: number;
   audio_rate: number;
   energy: number;
+  audio_signal?: AudioSignal;
+  localization?: Localization;
+  audio_processing?: {
+    camera_profile_label: string;
+    camera_microphone_label: string;
+    camera_profile_applies: boolean;
+    local_mode: string;
+    local_mode_label: string;
+    baseline_guard: boolean;
+  };
+  audio_comparison?: {
+    reference_scores: Record<string, number>;
+    processed_scores: Record<string, number> | null;
+    error: string | null;
+  };
   scores: Record<string, number>;
   models: Record<string, string>;
   native: Record<string, any>;
@@ -74,6 +83,13 @@ type State = {
   calibration: any;
   calibration_stage: number | string | null;
   calibration_captured: number[];
+  calibration_error?: string | null;
+  calibration_quality?: {
+    passed: boolean;
+    reason: string;
+    failed_angles: number[];
+    max_error_deg: number | null;
+  };
   forward_offset_deg: number;
   clock_diagnostics: any;
 };
@@ -106,13 +122,6 @@ const initial: State = {
 };
 const dirs = ["前方", "右前", "右侧", "右后", "后方", "左后", "左侧", "左前"];
 const colors = ["#ff622f", "#ffc768", "#4fe1dd"];
-const evidence: Record<string, string> = {
-  audio_only: "方向未知",
-  visual_candidate: "视觉候选方向",
-  audio_direction: "声源方向已标定",
-  audio_visual: "声音与视觉一致",
-  simulation: "模拟事件",
-};
 const source: Record<string, string> = {
   camera: "X4 Air 麦克风",
   microphone: "电脑麦克风",
@@ -125,6 +134,11 @@ const labels: Record<string, string> = {
   bell: "自行车铃",
   shout: "喊声",
   speech: "人声",
+  brake: "轮胎尖叫/打滑声",
+  crash: "碰撞/碎裂声",
+  vehicle_passing: "车辆经过",
+  dog_bark: "犬吠",
+  doorbell: "门铃",
 };
 const normalize = (a: number) => ((a % 360) + 360) % 360;
 const direction = (a: number | null) =>
@@ -226,101 +240,6 @@ function Panorama({
     s.texture.needsUpdate = true;
   }, [bitmap]);
   return <div className={"panorama " + (flat ? "flat" : "")} ref={host} />;
-}
-
-function Halo({
-  event,
-  yaw,
-  energy,
-}: {
-  event: Alert;
-  yaw: number;
-  energy: number;
-}) {
-  const angle = event.angle === null ? null : normalize(event.angle - yaw),
-    color = colors[event.priority];
-  if (angle === null)
-    return (
-      <div
-        className="unknown-alert"
-        style={{ "--alert": color } as React.CSSProperties}
-      >
-        <Volume2 />
-        <div>
-          <strong>{event.label}</strong>
-          <span>已识别声音 · 方向未知</span>
-        </div>
-      </div>
-    );
-  const theta = (angle * Math.PI) / 180;
-  // Entire shape stays inside the outer 7% of the viewport; center stays clear.
-  const point = (t: number, inset = 0) => [
-    500 + (477 - inset) * Math.sin(t),
-    300 - (279 - inset) * Math.cos(t),
-  ];
-  const points = Array.from({ length: 61 }, (_, i) => {
-    const t = theta + (i - 30) * 0.012;
-    const mod = Math.max(0, Math.sin(i * 0.65)) * Math.min(15, energy * 300);
-    return point(t, mod);
-  });
-  const path = points
-    .map((p, i) => `${i ? "L" : "M"}${p[0]},${p[1]}`)
-    .join(" ");
-  const x = Math.max(10, Math.min(90, 50 + 43 * Math.sin(theta))),
-    y = Math.max(16, Math.min(77, 50 - 34 * Math.cos(theta)));
-  return (
-    <>
-      <svg
-        className={"halo priority-" + event.priority}
-        viewBox="0 0 1000 600"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-        style={{ color, opacity: Math.max(0.55, event.confidence) }}
-      >
-        <defs>
-          <filter id="glow">
-            <feGaussianBlur stdDeviation="7" />
-          </filter>
-        </defs>
-        <path
-          d={path}
-          stroke="currentColor"
-          strokeWidth="15"
-          fill="none"
-          filter="url(#glow)"
-          opacity=".65"
-        />
-        <path d={path} stroke="currentColor" strokeWidth="2.5" fill="none" />
-      </svg>
-      <div
-        className="event-label"
-        style={
-          {
-            left: `clamp(145px, ${x}%, calc(100% - 145px))`,
-            top: `clamp(170px, ${y}%, calc(100% - 170px))`,
-            "--alert": color,
-          } as React.CSSProperties
-        }
-      >
-        <div className="event-heading">
-          <span className="diamond" />
-          <strong>
-            {event.label} · {direction(angle)}
-          </strong>
-        </div>
-        <span className="event-caption">
-          {event.approaching
-            ? "目标有接近趋势"
-            : event.priority === 0
-              ? "注意周围交通"
-              : event.priority === 1
-                ? "留意周围环境"
-                : "附近有人声"}
-        </span>
-        <small>{evidence[event.evidence]}</small>
-      </div>
-    </>
-  );
 }
 
 function App() {
@@ -510,7 +429,7 @@ function App() {
             </div>
             <div className="classifications">
               <h3>
-                声音分类 <span>最近窗口</span>
+                声音分类 <span>最近窗口 · 模型分数</span>
               </h3>
               {Object.entries(labels).map(([k, v]) => (
                 <div className="score" key={k}>
@@ -518,7 +437,7 @@ function App() {
                   <i>
                     <b style={{ width: (s.scores[k] || 0) * 100 + "%" }} />
                   </i>
-                  <small>{Math.round((s.scores[k] || 0) * 100)}%</small>
+                  <small>{(s.scores[k] || 0).toFixed(2)}</small>
                 </div>
               ))}
               <p>
@@ -527,6 +446,42 @@ function App() {
               </p>
               <p>音频模型：{s.models.audio || "等待服务"}</p>
               <p>视觉模型：{s.models.vision || "等待服务"}</p>
+              <div className="audio-diagnostics">
+                <h3>
+                  收音与定位{" "}
+                  <span>{s.audio_signal?.level_dbfs ?? "—"} dBFS</span>
+                </h3>
+                <SignalWave signal={s.audio_signal} />
+                <strong>{s.localization?.title || "等待音频诊断"}</strong>
+                <p>{s.localization?.detail}</p>
+                <p>
+                  {s.audio_processing?.camera_profile_applies
+                    ? `${s.audio_processing.camera_microphone_label} · ${s.audio_processing.camera_profile_label}`
+                    : "当前输入未使用相机收音模式"}
+                </p>
+                <p>
+                  软件降噪：
+                  {s.audio_processing?.local_mode_label || "关闭额外处理"}
+                </p>
+                {s.audio_processing?.baseline_guard && (
+                  <p>
+                    分类同时参考相机输出与低频抑制结果；波形、录制和定位使用软件处理前的音频。
+                  </p>
+                )}
+                {s.audio_comparison?.error && (
+                  <p className="processing-error">
+                    额外分类处理不可用，已保留基线：{s.audio_comparison.error}
+                  </p>
+                )}
+                {s.audio_signal?.correlation !== null &&
+                  s.audio_signal?.correlation !== undefined && (
+                    <p>
+                      声道相关性 {s.audio_signal.correlation.toFixed(5)} ·
+                      差异能量比{" "}
+                      {s.audio_signal.difference_ratio?.toExponential(2)}
+                    </p>
+                  )}
+              </div>
             </div>
           </section>
         )}
@@ -617,13 +572,50 @@ function App() {
             </span>
           </div>
           {(live || s.mode === "simulation") && primary && (
-            <Halo event={primary} yaw={yaw} energy={s.energy} />
+            <Halo event={primary} yaw={yaw} signal={s.audio_signal} />
           )}
-          {(live || s.mode === "simulation") && !primary && (
-            <div className="quiet">
-              <span />
-              留意前方，感知交给我们
+          {live &&
+          !primary &&
+          s.audio_signal?.present &&
+          (s.audio_signal.level_dbfs ?? -120) > -60 ? (
+            <div className="audio-monitor">
+              <Tetrahedron />
+              <div>
+                <span>
+                  {s.models.audio?.startsWith("ready")
+                    ? "正在分析环境声音"
+                    : "已收到环境声音"}
+                </span>
+                <SignalWave signal={s.audio_signal} />
+                <small>
+                  {source[s.audio_source]} ·{" "}
+                  {s.models.audio?.startsWith("error")
+                    ? "分类模型不可用"
+                    : s.models.audio?.startsWith("ready")
+                      ? "尚未确认类别"
+                      : "分类模型加载中"}
+                </small>
+              </div>
             </div>
+          ) : (
+            (live || s.mode === "simulation") &&
+            !primary && (
+              <div className="quiet">
+                <span />
+                留意前方，感知交给我们
+              </div>
+            )
+          )}
+          {live && (
+            <button
+              className="localization-status"
+              onClick={() => setPanel("calibration")}
+              title={s.localization?.detail}
+            >
+              <Compass size={13} />
+              {s.localization?.title || "正在检查定位能力"}
+              <ChevronRight size={12} />
+            </button>
           )}
           <div className="history-bar">
             <div className="history-title">
@@ -837,6 +829,7 @@ function App() {
                       value={simAngle}
                       onChange={(e) => setSimAngle(Number(e.target.value))}
                     >
+                      <option value={-1}>方向未知</option>
                       {dirs.map((d, i) => (
                         <option key={d} value={i * 45}>
                           {d}
@@ -849,7 +842,7 @@ function App() {
                         action(async () => {
                           await api("simulate", {
                             category: simCategory,
-                            angle: simAngle,
+                            angle: simAngle < 0 ? null : simAngle,
                           });
                           setPanel(null);
                         })
@@ -872,28 +865,57 @@ function App() {
                     <strong>
                       {source[s.audio_source]} · {s.channels} 声道
                     </strong>
-                    <span>
-                      {s.calibration?.rotation_verified
-                        ? "标定通过 · 已启用声源方向"
-                        : "声源方向尚未验证"}
-                    </span>
+                    <span>{s.localization?.title || "声源方向尚未验证"}</span>
                   </div>
                 </div>
+                <p className="localization-detail">{s.localization?.detail}</p>
+                {s.audio_processing?.camera_profile_applies && (
+                  <p>
+                    当前记录：{s.audio_processing.camera_microphone_label} ·{" "}
+                    {s.audio_processing.camera_profile_label}
+                    （机身设置由用户确认）
+                  </p>
+                )}
+                <a
+                  className="diagnostic-download"
+                  href="/api/audio/diagnostics"
+                  download
+                >
+                  <Download size={14} />
+                  导出声音诊断
+                </a>
+                {s.channels === 2 && (
+                  <div className="audio-help">
+                    <strong>当前实时音频无法完成四方位标定</strong>
+                    <p>
+                      可先停止取流，在相机屏幕顶部下拉 →
+                      音频设置，核对收音模式；重新连接后，本页会自动检查实际声道。
+                    </p>
+                    <p>
+                      “360 音频”用于全景视频录制，不保证 SDK
+                      直播输出空间声道。选择设置不会直接启用定位，仍以收到的数据和标定结果为准。
+                    </p>
+                  </div>
+                )}
                 <ol className="instructions">
                   <li>在设置中填写相机机身实际收音模式。</li>
                   <li>
                     声源距相机约 1.5m，在对应位置持续发声；每次采样 2 秒。
                   </li>
                   <li>
-                    完成四方位后，将声源留在原正前方，相机向右转
-                    90°，继续发声并验证。
+                    完成四方位后，先把声源移回最初的正前方并固定；相机从上往下看顺时针转
+                    90°，此时声源应位于相机新的左侧。继续发声并验证。
                   </li>
                 </ol>
                 <div className="calibration-grid">
                   {[0, 90, 180, 270].map((a) => (
                     <button
                       disabled={
-                        busy || s.channels !== 4 || s.audio_source !== "camera"
+                        busy ||
+                        s.calibration_stage !== null ||
+                        s.mode !== "live" ||
+                        s.channels !== 4 ||
+                        s.audio_source !== "camera"
                       }
                       className={
                         s.calibration_captured.includes(a) ? "captured" : ""
@@ -916,9 +938,56 @@ function App() {
                     </button>
                   ))}
                 </div>
+                {s.calibration_error && (
+                  <p role="alert" className="localization-detail">
+                    标定未通过：{s.calibration_error}
+                    。已保存的采样会保留，可重采对应方位。
+                  </p>
+                )}
+                {s.calibration?.estimates && (
+                  <div className="audio-help">
+                    <strong>
+                      {s.calibration_quality?.passed
+                        ? "逐方位与转动门槛已满足"
+                        : s.calibration.rotation_verified
+                          ? "声道映射已验证 · 方位精度未通过"
+                          : "声道映射拟合完成 · 等待验证"}
+                    </strong>
+                    <p>{s.calibration_quality?.reason}</p>
+                    <p>
+                      拟合平均误差 {s.calibration.mean_error_deg.toFixed(1)}° ·
+                      最大误差 {s.calibration.max_error_deg.toFixed(1)}°
+                    </p>
+                    <p>
+                      {s.calibration.estimates
+                        .map(
+                          (v: { target: number; error_deg: number }) =>
+                            `${direction(v.target)} ${v.error_deg.toFixed(1)}°`,
+                        )
+                        .join(" · ")}
+                    </p>
+                    {s.calibration.rotation && (
+                      <p>
+                        转动测试：预期 270°，测得{" "}
+                        {s.calibration.rotation.measured.toFixed(1)}°，误差{" "}
+                        {s.calibration.rotation.error_deg.toFixed(1)}°。
+                      </p>
+                    )}
+                    <p>
+                      采样已保存。以上为本次标定结果，完整现场精度验收尚未完成。
+                    </p>
+                  </div>
+                )}
                 <button
                   className="primary"
-                  disabled={busy || !s.calibration}
+                  disabled={
+                    busy ||
+                    s.calibration_stage !== null ||
+                    s.mode !== "live" ||
+                    s.channels !== 4 ||
+                    s.audio_source !== "camera" ||
+                    !s.calibration
+                  }
                   onClick={() =>
                     action(() =>
                       api("calibration/capture", { angle: "rotation" }),
@@ -959,6 +1028,22 @@ function App() {
                   />
                 </label>
                 <label>
+                  相机收音设备（按机身实际情况记录）
+                  <select
+                    value={config.camera_microphone ?? "unknown"}
+                    onChange={(e) =>
+                      setConfig({
+                        ...config,
+                        camera_microphone: e.target.value,
+                      })
+                    }
+                  >
+                    <option value="unknown">尚未确认</option>
+                    <option value="builtin">相机内置麦克风</option>
+                    <option value="external">相机外接麦克风</option>
+                  </select>
+                </label>
+                <label>
                   相机机身收音模式
                   <select
                     value={config.audio_profile}
@@ -967,11 +1052,37 @@ function App() {
                     }
                   >
                     <option value="unknown">尚未确认</option>
-                    <option value="ambisonic">全景声</option>
+                    <option value="ambisonic">全景声 / 360 音频</option>
                     <option value="stereo">立体声</option>
-                    <option value="wind_reduction">智能降风噪</option>
+                    <option value="wind_reduction_weak">智能降风噪-弱</option>
+                    <option value="wind_reduction_strong">智能降风噪-强</option>
+                    <option value="voice_focus">人声增强</option>
+                    <option value="wind_reduction">
+                      智能降风噪（旧记录，强度未确认）
+                    </option>
                   </select>
                 </label>
+                <p className="muted">
+                  以上两项用于记录机身状态，不会遥控相机切换模式。降噪模式与是否具备方向能力分别验证。
+                </p>
+                <label>
+                  软件降噪（仅声音分类）
+                  <select
+                    value={config.audio_preprocessing ?? "off"}
+                    onChange={(e) =>
+                      setConfig({
+                        ...config,
+                        audio_preprocessing: e.target.value,
+                      })
+                    }
+                  >
+                    <option value="off">关闭额外处理（默认）</option>
+                    <option value="lowcut_80hz">80Hz 低频抑制（实验）</option>
+                  </select>
+                </label>
+                <p className="muted">
+                  低频抑制只处理分类副本，并保留未额外处理的分类结果。它不能消除所有风噪，尚未验证能提高危险声音召回率；机身已开强降风噪时，默认不叠加。
+                </p>
                 <label className="check">
                   <input
                     type="checkbox"
@@ -1049,14 +1160,14 @@ function App() {
             <h2 style={{ color: colors[selected.priority] }}>
               {selected.label} · {direction(selected.angle)}
             </h2>
-            <p>{evidence[selected.evidence]}</p>
+            <p>{directionReason(selected)}</p>
             <dl>
               <dt>来源</dt>
               <dd>{source[selected.audio_source]}</dd>
               <dt>优先级</dt>
               <dd>P{selected.priority}</dd>
-              <dt>类别置信度</dt>
-              <dd>{Math.round(selected.confidence * 100)}%</dd>
+              <dt>声音模型分数</dt>
+              <dd>{selected.confidence.toFixed(2)}</dd>
               <dt>接近趋势</dt>
               <dd>{selected.approaching ? "视觉目标增大" : "未确认"}</dd>
             </dl>

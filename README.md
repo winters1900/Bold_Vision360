@@ -29,6 +29,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start.ps1
 
 声音模型和粗方位的实现、支持类别、已有 PCM 回放耗时及开源分发边界见 [本地声音识别与粗方位](docs/audio-model.md)。新增轮胎尖叫/打滑、碰撞/碎裂、车辆经过、犬吠和门铃提示仍需现场带标签样本验证；系统不提供语音转录。
 
+当前完成度、并行分支与剩余模块见 [项目状态](docs/project-status.md)。
+
 ## 安装与重建
 
 制作可审核的本地源码 ZIP 及核对第三方许可边界，见[源码包制作与发布边界](docs/release.md)。源码包不包含 SDK、模型权重、素材或本机标定文件。
@@ -68,7 +70,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup.ps1 -Python "C:\path\to\p
 
 只有实时相机四声道音频可执行声道标定：填写真实收音模式 → 1.5m 处前/右/后/左分别发声 2 秒 → **声源移回最初的正前方并固定**，相机从上往下看顺时针转 90° → 验证此时声源变为左侧。映射不唯一、能量置信度低或转动不通过时，不启用方向。标定页显示逐方位误差与失败原因，原始采样保存在 `runtime/calibration-samples.npz`，匹配相机和收音配置时可在重启后恢复；转动验证结果为 `runtime/calibration.json`，并绑定采样率和定位算法版本。验证后可把相机转回正常朝向。
 
-`reports/field-trials.csv` 已生成 240 个正样本测试行和一个 10 分钟负样本行。未测行 `observed=0`，不得填成通过。手工记录声音开始和 HUD 首次显示时间（同一外部视频/时钟），填写 `onset_ms` / `hud_ms`。
+本仓库的 `reports/field-trials.csv` 已生成 240 个正样本测试行和一个 10 分钟负样本行。源码 ZIP 不含现场报告；从 ZIP 安装时，先运行 `.venv\Scripts\python.exe scripts/evaluate.py --template reports/field-trials.csv` 生成空白表。不要对已有实测表再次运行该命令，否则会覆盖记录。未测行 `observed=0`，不得填成通过。手工记录声音开始和 HUD 首次显示时间（同一外部视频/时钟），填写 `onset_ms` / `hud_ms`。
 
 完整填写与统计口径见 [现场试验说明](docs/field-testing.md)。仅有 240 行并不代表完成；统计会检查每个条件/类别/方位/重复组合、明确的检测结果和负样本误报计数。
 

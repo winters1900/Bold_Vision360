@@ -36,6 +36,7 @@ models/
 recordings/
 runtime/
 build/
+dist/
 config.local.json
 web/node_modules/
 web/dist/

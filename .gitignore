@@ -41,5 +41,6 @@ web/node_modules/
 web/dist/
 .pytest_cache/
 reports/local-*
+reports/*.lock
 web/*.tsbuildinfo
 .worktrees/

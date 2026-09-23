@@ -139,6 +139,8 @@ const labels: Record<string, string> = {
   vehicle_passing: "车辆经过",
   dog_bark: "犬吠",
   doorbell: "门铃",
+  explosion: "疑似爆炸声",
+  gunshot: "疑似枪声",
 };
 const normalize = (a: number) => ((a % 360) + 360) % 360;
 const direction = (a: number | null) =>

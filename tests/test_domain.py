@@ -100,11 +100,31 @@ def test_new_candidate_does_not_inherit_an_unrelated_direction_filter():
 
 def test_audio_model_categories_have_alert_configuration_and_no_invented_bearing():
     assert GROUPS.keys() == LABELS.keys() == PRIORITY.keys() == DEFAULT_THRESHOLDS.keys()
-    assert len(GROUPS) == 10
-    for category in ("brake", "crash", "vehicle_passing", "dog_bark", "doorbell"):
+    assert len(GROUPS) == 12
+    for category in (
+        "brake",
+        "crash",
+        "vehicle_passing",
+        "dog_bark",
+        "doorbell",
+        "explosion",
+        "gunshot",
+    ):
         event = Fusion().observe(category, 0.8, 10, [], "camera")
         assert event.angle is None and event.evidence == "audio_only"
         assert event.label == LABELS[category]
+
+
+def test_pretrained_danger_categories_are_alerts_without_claiming_visual_source():
+    assert GROUPS["horn"] == ["Vehicle horn, car horn, honking", "Air horn, truck horn"]
+    assert GROUPS["dog_bark"] == ["Bark", "Bow-wow"]
+    assert GROUPS["explosion"] == ["Explosion"]
+    assert GROUPS["gunshot"] == ["Gunshot, gunfire"]
+    fusion = Fusion()
+    for category in ("explosion", "gunshot"):
+        event = fusion.observe(category, 0.8, 10, [target()], "camera")
+        assert event.priority == 0
+        assert event.angle is None and event.evidence == "audio_only"
 
 
 def test_calibrated_bearing_passes_to_an_environment_sound_without_visual_target():

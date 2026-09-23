@@ -10,5 +10,5 @@
   "camera_microphone": "unknown",
   "audio_preprocessing": "off",
   "software_decode": false,
-  "thresholds": {"horn": 0.35, "siren": 0.35, "bell": 0.35, "shout": 0.4, "speech": 0.55, "brake": 0.5, "crash": 0.55, "vehicle_passing": 0.6, "dog_bark": 0.6, "doorbell": 0.55}
+  "thresholds": {"horn": 0.35, "siren": 0.35, "bell": 0.35, "shout": 0.4, "speech": 0.55, "brake": 0.5, "crash": 0.55, "vehicle_passing": 0.6, "dog_bark": 0.6, "doorbell": 0.55, "explosion": 0.5, "gunshot": 0.5}
 }

@@ -173,6 +173,11 @@ GROUPS = {
     "vehicle_passing": ["Car passing by"],
     "dog_bark": ["Bark", "Bow-wow"],
     "doorbell": ["Doorbell", "Ding-dong"],
+    # These are pretrained AudioSet classes, not incident confirmation. Keep
+    # broad Boom and fireworks/firecrackers separate so other impulsive sounds
+    # are not labelled as an explosion or gunfire.
+    "explosion": ["Explosion"],
+    "gunshot": ["Gunshot, gunfire"],
 }
 
 

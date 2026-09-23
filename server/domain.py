@@ -17,6 +17,8 @@ LABELS = {
     "vehicle_passing": "车辆经过",
     "dog_bark": "犬吠",
     "doorbell": "门铃",
+    "explosion": "疑似爆炸声",
+    "gunshot": "疑似枪声",
 }
 PRIORITY = {
     "horn": 0,
@@ -29,6 +31,8 @@ PRIORITY = {
     "vehicle_passing": 2,
     "dog_bark": 2,
     "doorbell": 2,
+    "explosion": 0,
+    "gunshot": 0,
 }
 DEFAULT_THRESHOLDS = {
     "horn": 0.35,
@@ -41,6 +45,8 @@ DEFAULT_THRESHOLDS = {
     "vehicle_passing": 0.6,
     "dog_bark": 0.6,
     "doorbell": 0.55,
+    "explosion": 0.5,
+    "gunshot": 0.5,
 }
 DIRECTIONS = ["前方", "右前", "右侧", "右后", "后方", "左后", "左侧", "左前"]
 MATCHES = {
@@ -54,6 +60,8 @@ MATCHES = {
     "vehicle_passing": {"car", "truck", "bus"},
     "dog_bark": set(),
     "doorbell": set(),
+    "explosion": set(),
+    "gunshot": set(),
 }
 
 

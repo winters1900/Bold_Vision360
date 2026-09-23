@@ -167,7 +167,7 @@ export function SoundHalo({
           <Tetrahedron />
           <div>
             <strong>{event.label}</strong>
-            <span>已识别声音 · 方向未知</span>
+            <span>方向未知</span>
           </div>
           <b className="sound-priority">P{event.priority}</b>
         </div>

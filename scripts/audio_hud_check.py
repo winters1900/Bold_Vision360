@@ -76,6 +76,7 @@ async def main():
             history=[],
         )
         sockets = []
+        frame_sockets = []
         page = await browser.new_page()
         page.on("pageerror", lambda e: errors.append(str(e)))
 
@@ -83,8 +84,11 @@ async def main():
             sockets.append(ws)
             ws.send(json.dumps(fixture))
 
+        async def route_frame(ws):
+            frame_sockets.append(ws)
+
         await page.route_web_socket("**/ws/events", route)
-        await page.route_web_socket("**/ws/frames", lambda ws: None)
+        await page.route_web_socket("**/ws/frames", route_frame)
         await page.goto(URL)
         await page.wait_for_timeout(400)
 
@@ -134,6 +138,8 @@ async def main():
                 for angle in range(0, 360, 45):
                     await push(angle, angle // 45)
                     assert await page.locator(".event-label .tetrahedron").count() == 1
+                    assert await page.locator(".event-label .bearing-chevron").count() == 1
+                    assert await page.locator(".bearing-marker").get_attribute("data-bearing") == str(angle)
                     assert await page.locator(".wave-ribbon").count() == 1
                     hud = await page.locator(".hud-view").bounding_box()
                     box = await page.locator(".event-label").bounding_box()
@@ -147,11 +153,16 @@ async def main():
                 await push(None)
                 assert await page.locator(".halo").count() == 0
                 assert await page.locator(".unknown-alert .tetrahedron").count() == 1
+                assert await page.locator(".bearing-chevron").count() == 0
                 assert (
                     await page.locator('.unknown-alert .signal-wave[data-signal="pcm"]').count()
                     == 1
                 )
                 assert "方向未知" in await page.locator(".unknown-alert").inner_text()
+                if height <= 800:
+                    hud = await page.locator(".hud-view").bounding_box()
+                    card = await page.locator(".unknown-alert").bounding_box()
+                    assert hud["y"] + hud["height"] - card["y"] - card["height"] <= 140
                 await page.screenshot(
                     path=str(
                         ROOT
@@ -162,16 +173,72 @@ async def main():
                     await page.get_by_role("button", name="返回 HUD", exact=True).click()
             checks.append(dict(viewport=[width, height], eight_angles_and_unknown=True, debug=True))
 
+        await page.set_viewport_size({"width": 1680, "height": 940})
         await push(225, 5)
+        await page.wait_for_timeout(350)
+        marker_rotation = await page.locator(".bearing-marker").evaluate(
+            "el => { const m = new DOMMatrixReadOnly(getComputedStyle(el).transform); "
+            "return (Math.atan2(m.b, m.a) * 180 / Math.PI + 360) % 360; }"
+        )
+        assert abs((marker_rotation - 225 + 180) % 360 - 180) < 1
+        faces = await page.locator(".event-label .tetrahedron path[fill]").evaluate_all(
+            "els => els.map(el => [el.getAttribute('fill'), el.getAttribute('fill-opacity')])"
+        )
+        assert [face for face in faces if face[0] not in ("#10191c", "none")] == [
+            ["#ffc739", "1"],
+            ["#fb5539", "1"],
+            ["#79df42", "1"],
+        ], faces
+        assert await page.locator(".event-label .tetrahedron").evaluate(
+            "el => getComputedStyle(el).filter"
+        ) == "none"
         await page.screenshot(path=str(ROOT / "reports/local-audio-ribbon-simulation.png"))
+        # A recorded JPEG tests legibility over moving-camera imagery. The event
+        # remains explicitly labelled simulation and never counts as recognition.
+        recorded_frame = next((ROOT / "recordings" / session).glob("*.jpg")).read_bytes()
+        horn = fixture["events"][0].copy()
+        fixture["history"] = [
+            dict(horn, updated_at=state["now"] - 3),
+            dict(horn, id="ui-voice", category="voice", label="人声", priority=2,
+                 angle=35, sector=1, updated_at=state["now"] - 8),
+            dict(horn, id="ui-bell", category="bell", label="自行车铃", priority=1,
+                 angle=180, sector=4, updated_at=state["now"] - 12),
+        ]
+        fixture.update(mode="replay", frame_age_ms=0, fps=30)
+        for ws in sockets:
+            ws.send(json.dumps(fixture))
+        for ws in frame_sockets:
+            ws.send(recorded_frame)
+        await page.locator(".panorama canvas").wait_for()
+        await page.wait_for_timeout(300)
+        await page.screenshot(path=str(ROOT / "reports/local-audio-overlay-recorded-1680.png"))
+        fixture.update(mode="simulation", frame_age_ms=None, fps=0)
+        for ws in sockets:
+            ws.send(json.dumps(fixture))
         await push(35, 0)  # within backend hysteresis: label must stay in the front sector
+        await page.wait_for_timeout(350)
         assert "前方" in await page.locator(".event-label").inner_text()
+        await page.screenshot(path=str(ROOT / "reports/local-audio-front-right-simulation.png"))
         await push(359, 0)
         await page.get_by_title("向左查看").click()
+        await page.wait_for_timeout(350)
         assert float(await page.locator(".halo").get_attribute("data-angle")) == 44
+        assert await page.locator(".bearing-marker").get_attribute("data-bearing") == "44"
+        marker_rotation = await page.locator(".bearing-marker").evaluate(
+            "el => { const m = new DOMMatrixReadOnly(getComputedStyle(el).transform); "
+            "return (Math.atan2(m.b, m.a) * 180 / Math.PI + 360) % 360; }"
+        )
+        assert abs((marker_rotation - 44 + 180) % 360 - 180) < 1
         assert "右前" in await page.locator(".event-label").inner_text()
         await page.get_by_role("button", name="回正", exact=True).click()
+        await page.wait_for_timeout(350)
         await push(1, 0)
+        await page.wait_for_timeout(70)
+        marker_rotation = await page.locator(".bearing-marker").evaluate(
+            "el => { const m = new DOMMatrixReadOnly(getComputedStyle(el).transform); "
+            "return (Math.atan2(m.b, m.a) * 180 / Math.PI + 360) % 360; }"
+        )
+        assert marker_rotation < 30 or marker_rotation > 330, marker_rotation
         assert "前方" in await page.locator(".event-label").inner_text()
         await push(90, 2, with_signal=False)
         assert await page.locator(".wave-ribbon").count() == 0

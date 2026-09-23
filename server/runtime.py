@@ -24,7 +24,13 @@ from .recording import Recorder, safe_session, load_timeline
 from .vision import Detector
 from .clock import CameraClock
 from .noise import classify_views, processing_status
-from .calibration import calibration_quality, capture_binding, load_samples, save_samples
+from .calibration import (
+    DIRECTION_ERROR_LIMIT,
+    calibration_quality,
+    capture_binding,
+    load_samples,
+    save_samples,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -828,11 +834,14 @@ class Runtime:
         except (ValueError, OSError, KeyError) as exc:
             self.calibration_error = str(exc)
 
-    def save_calibration(self):
+    def save_calibration(self, calibration=None):
         path = ROOT / "runtime/calibration.json"
         path.parent.mkdir(exist_ok=True)
         temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(self.calibration, indent=2), encoding="utf-8")
+        temporary.write_text(
+            json.dumps(self.calibration if calibration is None else calibration, indent=2),
+            encoding="utf-8",
+        )
         temporary.replace(path)
 
     async def calibrate(self, angle):
@@ -870,22 +879,33 @@ class Runtime:
                     raise ValueError("有效四声道数据不足一秒")
                 pcm = np.concatenate(data)
                 if angle in (0, 90, 180, 270):
-                    # A new cardinal sample invalidates a previously verified fit.
-                    self.calibration = None
-                    (ROOT / "runtime/calibration.json").unlink(missing_ok=True)
-                    if self.calibration_samples_binding != binding:
-                        self.calibration_samples.clear()
-                    self.calibration_samples_binding = binding
-                    self.calibration_samples[angle] = pcm
-                    save_samples(
-                        ROOT / "runtime/calibration-samples.npz", self.calibration_samples, binding
+                    # Validate a copy before changing a previously verified fit or
+                    # replacing its saved samples. Partial first-time captures are
+                    # still persisted so the four-step flow survives a restart.
+                    samples = (
+                        dict(self.calibration_samples)
+                        if self.calibration_samples_binding == binding
+                        else {}
                     )
-                    if len(self.calibration_samples) == 4:
-                        self.calibration = {
-                            **fit_axes(self.calibration_samples, self.audio_rate),
-                            **binding,
-                        }
-                        self.save_calibration()
+                    samples[angle] = pcm
+                    fitted = None
+                    if len(samples) == 4:
+                        fitted = {**fit_axes(samples, self.audio_rate), **binding}
+                        if any(
+                            row["error_deg"] > DIRECTION_ERROR_LIMIT
+                            or row["confidence"] < 0.2
+                            for row in fitted["estimates"]
+                        ):
+                            raise ValueError("逐方位方向误差或置信度未达标，请重新采样")
+                    save_samples(
+                        ROOT / "runtime/calibration-samples.npz", samples, binding
+                    )
+                    if fitted:
+                        self.save_calibration(fitted)
+                    self.calibration_samples = samples
+                    self.calibration_samples_binding = binding
+                    if fitted:
+                        self.calibration = fitted
                 elif angle == "rotation":
                     if not self.calibration:
                         raise ValueError("先完成四方位采样")

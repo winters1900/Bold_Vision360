@@ -438,38 +438,6 @@ header {
   height: 18px;
   margin: 1px 0 2px;
 }
-.audio-monitor {
-  --alert: #73c9c5;
-  position: absolute;
-  bottom: 175px;
-  left: 24px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  border-radius: 8px;
-  background: #0b1a20ab;
-  backdrop-filter: blur(12px);
-  pointer-events: none;
-}
-.audio-monitor .tetrahedron {
-  width: 30px;
-  height: 30px;
-}
-.audio-monitor > div {
-  width: 185px;
-}
-.audio-monitor span {
-  font-size: 12px;
-  color: #cde4e1;
-}
-.audio-monitor small {
-  font-size: 9px;
-  color: #a7bebc;
-}
-.audio-monitor .signal-wave {
-  height: 28px;
-}
 .localization-status {
   position: absolute;
   left: 24px;
@@ -516,10 +484,6 @@ header {
   top: 142px;
   max-width: calc(100% - 48px);
 }
-.debug .audio-monitor {
-  left: 16px;
-  bottom: 175px;
-}
 @media (prefers-reduced-motion: reduce) {
   .signal-pending {
     animation: none;
@@ -527,25 +491,6 @@ header {
   .bearing-marker {
     transition: none;
   }
-}
-.quiet {
-  position: absolute;
-  bottom: 180px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 10px;
-  letter-spacing: 2px;
-  color: #ffffff6b;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-}
-.quiet span {
-  width: 3px;
-  height: 3px;
-  background: #afdfd0;
-  border-radius: 50%;
 }
 .history-bar {
   position: absolute;
@@ -1288,13 +1233,6 @@ nav button.active {
 @media (max-height: 800px) {
   .unknown-alert {
     bottom: 132px;
-  }
-  .audio-monitor,
-  .debug .audio-monitor {
-    bottom: 135px;
-  }
-  .quiet {
-    bottom: 140px;
   }
   .history-bar {
     bottom: 65px;

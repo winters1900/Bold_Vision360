@@ -52,3 +52,9 @@
 ```powershell
 .venv\Scripts\python.exe scripts/spatial_calibration_audit.py 20260923-104556-8702 20260923-114933-8c69 20260923-115447-afd2 20260923-110400-32e9 20260923-111257-75f5 --output reports/local-spatial-calibration-refined.json
 ```
+
+## 2026-09-23 运行时恢复
+
+一次后续重新采样把本机保存的前方样本覆盖成低置信度片段：按已验证映射测得 245.75°、置信度 0.037。系统因此拒绝四向拟合，直播状态显示“多声道 · 待标定”，未把该角度作为声源方向输出。代码现先在候选样本副本上完成四向拟合和逐向门槛检查；失败的重新采样不会覆盖现有标定文件。
+
+从上列五份原始录制重建的标定再次通过逐向及独立转动检查，最大逐向误差 16.00°、转动误差 0.60°。本机使用默认只读的 `scripts/recover_spatial_calibration.py` 审计，停止服务后用 `--apply --expected-serial IAFEA26049TH54` 应用；旧文件备份在 `runtime/calibration-history/recovery-20260923-185536-387200/`。重新启动直播后实际约 30 FPS、相机 48 kHz 四声道，状态为“声源方向已标定”、`calibration_quality.passed=true`。这仍是已有标定素材的恢复，不是新的独立现场方位准确率试验。

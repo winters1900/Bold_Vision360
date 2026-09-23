@@ -23,8 +23,6 @@ OVERLAYS = (
     ".localization-status",
     ".event-label",
     ".unknown-alert",
-    ".audio-monitor",
-    ".quiet",
     ".history-bar",
     ".view-controls",
 )
@@ -151,6 +149,7 @@ async def main():
                 await page.wait_for_function(
                     "document.querySelectorAll('.event-label, .unknown-alert').length === 0"
                 )
+                assert await page.locator(".audio-monitor, .quiet").count() == 0
             elif angle is None:
                 await page.locator(".unknown-alert").wait_for()
             else:

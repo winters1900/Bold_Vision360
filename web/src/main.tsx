@@ -29,7 +29,6 @@ import "./style.css";
 import {
   SoundHalo as Halo,
   SignalWave,
-  Tetrahedron,
   directionReason,
   type SoundEvent,
   type AudioSignal,
@@ -575,38 +574,6 @@ function App() {
           </div>
           {(live || s.mode === "simulation") && primary && (
             <Halo event={primary} yaw={yaw} signal={s.audio_signal} />
-          )}
-          {live &&
-          !primary &&
-          s.audio_signal?.present &&
-          (s.audio_signal.level_dbfs ?? -120) > -60 ? (
-            <div className="audio-monitor">
-              <Tetrahedron />
-              <div>
-                <span>
-                  {s.models.audio?.startsWith("ready")
-                    ? "正在分析环境声音"
-                    : "已收到环境声音"}
-                </span>
-                <SignalWave signal={s.audio_signal} />
-                <small>
-                  {source[s.audio_source]} ·{" "}
-                  {s.models.audio?.startsWith("error")
-                    ? "分类模型不可用"
-                    : s.models.audio?.startsWith("ready")
-                      ? "尚未确认类别"
-                      : "分类模型加载中"}
-                </small>
-              </div>
-            </div>
-          ) : (
-            (live || s.mode === "simulation") &&
-            !primary && (
-              <div className="quiet">
-                <span />
-                留意前方，感知交给我们
-              </div>
-            )
           )}
           {live && (
             <button

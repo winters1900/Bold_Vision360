@@ -26,7 +26,7 @@ No actionable P0/P1/P2 visual issue remains for the requested directional HUD ov
 
 1. Initial review found a color-mixing glow on the prism, no separate `^`, an overly long edge arc, a front-right label intersecting the ribbon, and the unknown card too high on a short screen.
 2. The prism was rebuilt with opaque colored faces and white seams; a separate colored chevron was added and tied to the bearing relative to viewer yaw. The arc was shortened and tapered, the forward label shifted inward, and height-sensitive bottom placement was restored. `reports/local-audio-overlay-recorded-1680.png`, `reports/local-audio-front-right-simulation.png`, and `reports/local-audio-unknown-1366-debug.png` are the post-fix browser captures.
-3. Final browser checks passed at 1920×1080 and 1366×768 in HUD and debug layouts, across eight directions and unknown direction. The 359°→1° marker rotation takes the short path. No browser console errors or horizontal overflow were reported. The 40-case central-area geometry check found at least 87.81% clear area in its 70%-area center rectangle; translucent edge pixels are outside that measurement.
+3. Final browser checks passed at 1920×1080 and 1366×768 in HUD and debug layouts, across eight directions and unknown direction. The 359°→1° marker rotation takes the short path. No browser console errors or horizontal overflow were reported. After removing the unclassified-sound card, the 40-case central-area geometry check found at least 87.61% clear area in its 70%-area center rectangle; translucent edge pixels are outside that measurement.
 
 **Intentional differences and remaining validation**
 

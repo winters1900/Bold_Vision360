@@ -140,6 +140,76 @@ def test_audio_discontinuity_cancels_capture_without_saving_partial_samples(monk
     assert not (tmp_path / "runtime/calibration-samples.npz").exists()
 
 
+@pytest.mark.parametrize("bad_pcm", ["quiet", "wrong_direction"])
+def test_failed_cardinal_recapture_preserves_verified_calibration(monkeypatch, tmp_path, bad_pcm):
+    r = calibrated_runtime()
+    monkeypatch.setattr("server.runtime.ROOT", tmp_path)
+    samples = {a: directional_pcm(a) for a in (0, 90, 180, 270)}
+    r.calibration_samples = samples
+    r.calibration_samples_binding = r.spatial_binding
+    r.save_calibration()
+    save_samples(tmp_path / "runtime/calibration-samples.npz", samples, r.spatial_binding)
+    calibration_path = tmp_path / "runtime/calibration.json"
+    samples_path = tmp_path / "runtime/calibration-samples.npz"
+    previous_calibration = calibration_path.read_bytes()
+    previous_samples = samples_path.read_bytes()
+
+    async def capture(_):
+        pcm = (
+            np.zeros_like(directional_pcm(90))
+            if bad_pcm == "quiet"
+            else directional_pcm(120)
+        )
+        r.calibration_ring.append((time.perf_counter(), pcm))
+
+    monkeypatch.setattr("server.runtime.asyncio.sleep", capture)
+    with pytest.raises(ValueError):
+        asyncio.run(r.calibrate(90))
+    assert r.calibrated_audio
+    assert r.calibration_error and r.calibration_stage is None
+    assert calibration_path.read_bytes() == previous_calibration
+    assert samples_path.read_bytes() == previous_samples
+    assert np.array_equal(r.calibration_samples[90], samples[90])
+
+
+def test_first_time_cardinal_capture_persists_partial_samples_and_retries_bad_fourth(
+    monkeypatch, tmp_path
+):
+    r = calibrated_runtime()
+    r.calibration = None
+    monkeypatch.setattr("server.runtime.ROOT", tmp_path)
+    capture_angle = [0]
+
+    async def capture(_):
+        r.calibration_ring.append(
+            (time.perf_counter(), directional_pcm(capture_angle[0]))
+        )
+
+    monkeypatch.setattr("server.runtime.asyncio.sleep", capture)
+    for angle in (0, 90, 180):
+        capture_angle[0] = angle
+        asyncio.run(r.calibrate(angle))
+        assert set(load_samples(tmp_path / "runtime/calibration-samples.npz", r.spatial_binding)) == {
+            a for a in (0, 90, 180) if a <= angle
+        }
+        assert r.calibration is None
+        assert not (tmp_path / "runtime/calibration.json").exists()
+
+    capture_angle[0] = 300
+    with pytest.raises(ValueError):
+        asyncio.run(r.calibrate(270))
+    assert set(r.calibration_samples) == {0, 90, 180}
+    assert set(load_samples(tmp_path / "runtime/calibration-samples.npz", r.spatial_binding)) == {
+        0, 90, 180
+    }
+
+    capture_angle[0] = 270
+    asyncio.run(r.calibrate(270))
+    assert set(r.calibration_samples) == {0, 90, 180, 270}
+    assert r.calibration and not r.calibration["rotation_verified"]
+    assert (tmp_path / "runtime/calibration.json").exists()
+
+
 def test_runtime_restores_real_binding_and_samples_once_per_format(monkeypatch, tmp_path):
     r = calibrated_runtime()
     monkeypatch.setattr("server.runtime.ROOT", tmp_path)
